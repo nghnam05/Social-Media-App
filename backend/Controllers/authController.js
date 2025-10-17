@@ -9,9 +9,8 @@ const AppError = require("../src/utils/appError");
 const generateOTP = require("../src/utils/generateOTP");
 const sendMail = require("../src/utils/email");
 
-// ==============================
-// 📌 Hàm load template email
-// ==============================
+//  Hàm load template email
+
 const loadTemplate = (templateName, replacements) => {
   const templatePath = path.join(__dirname, "../Email", templateName);
   const source = fs.readFileSync(templatePath, "utf-8");
@@ -19,9 +18,8 @@ const loadTemplate = (templateName, replacements) => {
   return template(replacements);
 };
 
-// ==============================
-// 📌 Tạo JWT token và gửi cookie
-// ==============================
+//  Tạo JWT token và gửi cookie
+
 const signToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN,
@@ -53,9 +51,8 @@ const createSendToken = (user, statusCode, res, message) => {
   });
 };
 
-// ==============================
-// 📌 Xử lý đăng ký tài khoản + gửi OTP
-// ==============================
+//  Xử lý đăng ký tài khoản + gửi OTP
+
 exports.signup = catchAsync(async (req, res, next) => {
   const { email, password, passwordConfirm, username } = req.body;
 
@@ -69,7 +66,7 @@ exports.signup = catchAsync(async (req, res, next) => {
   const otp = generateOTP();
   const otpExpires = Date.now() + 15 * 60 * 1000; // OTP hết hạn sau 15 phút
 
-  // 3️⃣ Tạo tài khoản tạm
+  //  Tạo tài khoản tạm
   const newUser = await User.create({
     username,
     email,
@@ -79,7 +76,7 @@ exports.signup = catchAsync(async (req, res, next) => {
     otpExpires,
   });
 
-  // 4️⃣ Load template email
+  //  Load template email
   const htmlTemplate = loadTemplate("emailTemplate.hbs", {
     title: "Xác minh tài khoản của bạn",
     username: newUser.username,
@@ -87,7 +84,7 @@ exports.signup = catchAsync(async (req, res, next) => {
     message: "Mã OTP của bạn là:",
   });
 
-  // 5️⃣ Gửi email OTP
+  //  Gửi email OTP
   try {
     await sendMail({
       email: newUser.email,
@@ -95,7 +92,7 @@ exports.signup = catchAsync(async (req, res, next) => {
       html: htmlTemplate,
     });
 
-    // 6️⃣ Gửi phản hồi sau khi gửi email thành công
+    //  Gửi phản hồi sau khi gửi email thành công
     createSendToken(
       newUser,
       201,
@@ -108,5 +105,68 @@ exports.signup = catchAsync(async (req, res, next) => {
     return next(
       new AppError("Không thể gửi email xác minh. Vui lòng thử lại sau!", 500)
     );
+  }
+});
+
+exports.verifyAccount = catchAsync(async (req, res, next) => {
+  const { otp } = req.body;
+  if (!otp) {
+    return next(new AppError("Mã OTP bắt buộc để xác thực", 401));
+  }
+  const user = req.user;
+  if (user.otp !== otp) {
+    return next(new AppError("Mã OTP không hợp lệ !"));
+  }
+  if (Date.now() > user.otpExpires) {
+    return next(
+      new AppError("Mã OTP đã hết hạn, vui lòng yêu cầu mã mới.", 401)
+    );
+  }
+  user.isVerified = true;
+  user.otp = undefined;
+  user.otpExpires = undefined;
+
+  await user.save({ validateBeforeSave: false });
+  createSendToken(user, 200, res, "Email đã được xác thực");
+});
+
+exports.resendOtp = catchAsync(async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) {
+    return next(new AppError("Email không được để trống !", 400));
+  }
+  const user = await User.findOne({ email });
+  if (!user) {
+    return next(new AppError("Không tìm thấy người dùng ", 404));
+  }
+  if (user.isVerifired) {
+    return next(new AppError("Tài khoản này đã được xác thực", 400));
+  }
+  const otp = generateOTP();
+  const otpExpires = Date.now() + 24 * 60 * 60 * 1000;
+  user.otp = otp;
+  user.otpExpires = otpExpires;
+  await user.save({ validateBeforeSave: false });
+  const htmlTemplate = loadTemplate("emailTemplate.hbs", {
+    title: "Xác minh tài khoản của bạn",
+    username: user.username,
+    otp,
+    message: "Mã OTP của bạn là:",
+  });
+  try {
+    await sendMail({
+      email: user.email,
+      subject: "Gửi lại mã OTP",
+      html: htmlTemplate,
+    });
+    res.status(200).json({
+      status: "success",
+      message: "Đã gửi một mã OTP mới tới Email của bạn",
+    });
+  } catch (error) {
+    user.otp = undefined;
+    user.otpExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+    return next(new AppError("Có lỗi khi gửi lại mã OTP", 500));
   }
 });
