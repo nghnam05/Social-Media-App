@@ -55,8 +55,6 @@ const createSendToken = (user, statusCode, res, message) => {
 
 exports.signup = catchAsync(async (req, res, next) => {
   const { email, password, passwordConfirm, username } = req.body;
-
-  // 1️⃣ Kiểm tra email đã tồn tại chưa
   const existingUser = await User.findOne({ email });
   if (existingUser) {
     return next(new AppError("Email đã tồn tại trong hệ thống!", 400));
@@ -168,5 +166,73 @@ exports.resendOtp = catchAsync(async (req, res, next) => {
     user.otpExpires = undefined;
     await user.save({ validateBeforeSave: false });
     return next(new AppError("Có lỗi khi gửi lại mã OTP", 500));
+  }
+});
+
+exports.login = catchAsync(async (req, res, next) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return next(new AppError("vui long cung cap tai khoan hoac mat khau", 400));
+  }
+
+  const user = await User.findOne({ email }).select("+password");
+  if (!user || !(await user.correctPassword(password, user.password))) {
+    return next(new AppError("Mat khau khong dung", 401));
+  }
+  createSendToken(user, 200, res, "Dang nhap thanh cong");
+});
+
+// logout
+
+exports.logOut = catchAsync((req, res, next) => {
+  res.cookie("token", "Da dang xuat", {
+    expires: new Date(Date.now() + 10 * 1000),
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+  });
+  res.status(200).json({
+    status: "Thanh cong",
+    message: "Dang xuat thanh cong",
+  });
+});
+
+// quen password
+
+exports.forgetPassword = catchAsync(async (req, res, next) => {
+  const { email } = req.body;
+  const user = await User.findOne({ email });
+  if (!user) {
+    return next(new AppError("Nguoi dung khong ton tai", 404));
+  }
+  const otp = generateOTP();
+  const resetExpires = Date.now() + 300000;
+  user.resetPassOtpExpires = otp;
+  user.resetPassOtpExpires = resetExpires;
+
+  await user.save({ validateBeforeSave: false });
+
+  const htmlTemplate = loadTemplate("otptemplate.hbs", {
+    title: "Mã đặt lại mật khẩu của bạn",
+    username: user.username,
+    otp,
+    message: "Mã đặt lại mật khẩu của bạn là  : ",
+  });
+  try {
+    await sendMail({
+      email: user.email,
+      subject: "Mã đặt lại mật khẩu của bạn",
+      html: htmlTemplate,
+    });
+    res.status(200).json({
+      status: "Thanh cong",
+      message: "Ma da duoc gui toi email cua ban",
+    });
+  } catch (error) {
+    user.resetPassOtpExpires = undefined;
+    user.resetPassOtp = undefined;
+    await user.save({ validateBeforeSave: false });
+    return next(
+      new AppError("Có lỗi trong quá trình gửi email , vui lòng thử lại !")
+    );
   }
 });

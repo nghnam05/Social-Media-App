@@ -7,6 +7,7 @@ const mongoSanitize = require("express-mongo-sanitize");
 const path = require("path");
 const UserRouter = require("../Routes/userRoute");
 const globalHandler = require("../Controllers/errorController");
+const AppError = require("./utils/appError");
 
 const app = express();
 
@@ -44,7 +45,12 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Cho phép truy cập các file trong thư mục public (CSS, JS, ảnh,...)
 app.use(express.static(path.join(__dirname, "../public")));
-
+app.get("/", (req, res) => {
+  res.status(200).json({
+    status: "success",
+    message: "🚀 Server is running successfully!",
+  });
+});
 // route cho user
 app.use("/api/users", UserRouter);
 
